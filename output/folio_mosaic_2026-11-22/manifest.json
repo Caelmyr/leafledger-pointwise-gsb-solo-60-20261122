@@ -1,0 +1,82 @@
+{
+  "folio_plane_px": [
+    1240,
+    944
+  ],
+  "specimen": "Willow-leaved aster",
+  "captures": {
+    "A_vein_left.png": {
+      "role": "left fill, cross-polarized diffuse",
+      "strength": "fine veins crisp; marginal tear faint"
+    },
+    "B_tear_right.png": {
+      "role": "right fill, raking light",
+      "strength": "tear relief clear; fine veins faint"
+    }
+  },
+  "shared_band_nominal_normalized": {
+    "x0": 0.385,
+    "x1": 0.585
+  },
+  "shared_band_actual": "intersection of mask_A_coverage and mask_B_coverage",
+  "hard_cut_seam_x_normalized": 0.585,
+  "hard_cut_seam_col_px": 725,
+  "band_assignment": "every pixel covered by both originals is copied from A; verified by assertion that the label map has no B pixel inside the overlap mask",
+  "blending": "none; every mosaic pixel copied from exactly one source",
+  "void_wedge_normalized": {
+    "tip_y": 0.905,
+    "corner_x": 0.6
+  },
+  "tear_normalized": {
+    "x": 0.63,
+    "y_top": 0.345,
+    "y_bottom": 0.415
+  },
+  "sacrifice": "The tear was placed past A's coverage edge on purpose: the mosaic keeps the B raking view of it. What is sacrificed is the fine venation of the B-sourced blade beyond the hard cut - its vein-scale relief was flattened in that capture, so only faint vein texture remains there; no A pixels exist in that region to recover the crisp network.",
+  "line_scans": [
+    {
+      "name": "scan1_across_seam_and_tear",
+      "start": [
+        0.1,
+        0.382
+      ],
+      "end": [
+        0.92,
+        0.382
+      ],
+      "stations": 120,
+      "band_px": 5
+    },
+    {
+      "name": "scan2_through_void_wedge",
+      "start": [
+        0.42,
+        0.955
+      ],
+      "end": [
+        0.82,
+        0.955
+      ],
+      "stations": 90,
+      "band_px": 5
+    },
+    {
+      "name": "scan3_inside_shared_band",
+      "start": [
+        0.395,
+        0.62
+      ],
+      "end": [
+        0.575,
+        0.62
+      ],
+      "stations": 60,
+      "band_px": 3
+    }
+  ],
+  "source_label_map_codes": {
+    "0": "void",
+    "1": "A",
+    "2": "B"
+  }
+}

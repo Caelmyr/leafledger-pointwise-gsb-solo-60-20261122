@@ -1,0 +1,32 @@
+[
+  {
+    "source": "A",
+    "source_file": "A_vein_left.png",
+    "station_start": 1,
+    "station_end": 26,
+    "folio_from": [
+      0.42,
+      0.955
+    ],
+    "folio_to": [
+      0.53236,
+      0.955
+    ],
+    "note": ""
+  },
+  {
+    "source": "VOID",
+    "source_file": null,
+    "station_start": 27,
+    "station_end": 90,
+    "folio_from": [
+      0.536854,
+      0.955
+    ],
+    "folio_to": [
+      0.82,
+      0.955
+    ],
+    "note": "uncovered by both originals - left empty"
+  }
+]

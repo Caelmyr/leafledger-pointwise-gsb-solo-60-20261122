@@ -1,0 +1,17 @@
+[
+  {
+    "source": "A",
+    "source_file": "A_vein_left.png",
+    "station_start": 1,
+    "station_end": 60,
+    "folio_from": [
+      0.395,
+      0.62
+    ],
+    "folio_to": [
+      0.575,
+      0.62
+    ],
+    "note": ""
+  }
+]

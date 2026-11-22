@@ -1,0 +1,32 @@
+[
+  {
+    "source": "A",
+    "source_file": "A_vein_left.png",
+    "station_start": 1,
+    "station_end": 71,
+    "folio_from": [
+      0.1,
+      0.382
+    ],
+    "folio_to": [
+      0.582353,
+      0.382
+    ],
+    "note": ""
+  },
+  {
+    "source": "B",
+    "source_file": "B_tear_right.png",
+    "station_start": 72,
+    "station_end": 120,
+    "folio_from": [
+      0.589244,
+      0.382
+    ],
+    "folio_to": [
+      0.92,
+      0.382
+    ],
+    "note": ""
+  }
+]
