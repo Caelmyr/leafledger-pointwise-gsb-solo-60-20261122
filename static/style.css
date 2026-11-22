@@ -156,6 +156,11 @@ dialog::backdrop{background:#172a24b5}
 .draw-label{paint-order:stroke;stroke:#18291e;fill:#fff7d7;stroke-width:2px;vector-effect:non-scaling-stroke;font-size:30px}
 .stage-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .stage-pair img{object-fit:contain;width:100%;max-height:55vh}
+.pair-stage{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.pair-stage figcaption{color:var(--muted);font-size:12px;margin:0 0 6px;text-align:center}
+.pair-stage .capture-drawing{width:100%}
+.pair-stage .capture-drawing img{max-height:42vh;width:100%}
+@media(max-width:900px){.pair-stage{grid-template-columns:1fr}}
 #toast{position:fixed;bottom:19px;right:21px;max-width:min(440px,calc(100% - 42px));padding:10px 13px;border-radius:7px;color:#fffbe6;background:#263b30;box-shadow:var(--shadow);z-index:8}
 #toast:empty{display:none}#toast.error{background:#893f34}
 @media(max-width:1230px){body{grid-template-columns:205px minmax(0,1fr)}.rail{padding-left:14px;padding-right:14px}.hero-text{padding:35px}}

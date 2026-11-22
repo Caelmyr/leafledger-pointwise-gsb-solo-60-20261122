@@ -8,6 +8,7 @@ from .geometry import (
     specimen_frame,
     validate_polygon,
 )
+from .macro import detail_transform
 from .model import (
     ConflictError,
     InputError,
@@ -29,12 +30,21 @@ from .photos import diagnostic_flags, store_capture
 from .store import make_id
 
 
-def describe_photo(photo, plane, registrations):
+def describe_photo(photo, plane, registrations, detail_links=None):
     info = {**photo}
     info["role_label"] = ROLE_LABELS[photo["role"]]
     info["diagnostics"] = diagnostic_flags(photo)
     is_base = plane is not None and plane["photo_id"] == photo["id"]
-    info["registration_state"] = "base" if is_base else "registered" if photo["id"] in registrations else "unregistered"
+    detail = bool(detail_links and photo["id"] in detail_links)
+    if is_base:
+        state = "base"
+    elif detail:
+        state = "detail"
+    elif photo["id"] in registrations:
+        state = "registered"
+    else:
+        state = "unregistered"
+    info["registration_state"] = state
     info["preview_url"] = f"/api/captures/{photo['id']}/preview"
     return info
 
@@ -55,21 +65,24 @@ def summarize_tile(tile):
         "photo_count": len(photos),
         "region_count": len(tile["regions"]),
         "cover_url": f"/api/specimens/{tile['id']}/photos/{cover['id']}/thumbnail" if cover else None,
-        "registered_count": int(bool(base)) + len(tile["registrations"]),
+        "registered_count": int(bool(base)) + len(tile["registrations"]) + len(tile.get("detail_links", {})),
         "updated_at": tile["updated_at"],
     }
 
 
 def present_tile(tile):
     registrations = tile["registrations"]
+    detail_links = tile.get("detail_links", {})
     photos = []
     for record in tile["photos"]:
-        data = describe_photo(record, tile["plane"], registrations)
+        data = describe_photo(record, tile["plane"], registrations, detail_links)
         data["preview_url"] = f"/api/specimens/{tile['id']}/photos/{record['id']}/preview"
         data["thumbnail_url"] = f"/api/specimens/{tile['id']}/photos/{record['id']}/thumbnail"
         data["original_url"] = f"/api/specimens/{tile['id']}/photos/{record['id']}/original"
         if data["registration_state"] != "unregistered":
             data["registered_url"] = f"/api/specimens/{tile['id']}/viewer/{record['id']}?v={tile['version']}"
+        if record["id"] in detail_links:
+            data["detail_support_percent"] = detail_links[record["id"]].get("support_percent")
         photos.append(data)
     native = tile.get("plane")
     return {
@@ -149,6 +162,7 @@ def remove_photo(store, tile_id, capture_id, payload):
             tile["registrations"] = {}
             tile["regions"] = []
         tile["registrations"].pop(capture_id, None)
+        tile.get("detail_links", {}).pop(capture_id, None)
         tile["photos"].remove(photo)
 
     return store.edit_tile(tile_id, expected, change, "capture", "Removed a photo from the live specimen")
@@ -195,6 +209,7 @@ def save_plane(store, tile_id, payload):
             raise ConflictError("Changing the specimen plane requires confirming reset of its live regions and registrations.")
         tile["plane"] = updated
         tile["registrations"].clear()
+        tile.get("detail_links", {}).clear()
         tile["regions"].clear()
         tile["calibration"] = None
 
@@ -214,6 +229,7 @@ def save_registration(store, identifier, photo_id, payload):
         raise InputError("Mark a region with at least 15% visible support.")
 
     def change(tile):
+        tile.get("detail_links", {}).pop(photo_id, None)
         tile["registrations"][photo_id] = {
             "base_photo_id": tile["plane"]["photo_id"],
             "corners": corners,
@@ -291,3 +307,65 @@ def clear_calibration(store, identifier, payload):
         tile["calibration"] = None
 
     return store.edit_tile(identifier, expected, change, "calibration", "Cleared neutral-card image gains")
+
+
+MIN_DETAIL_SUPPORT = 0.02
+
+
+def save_detail_link(store, identifier, photo_id, payload):
+    expected = model_version(payload)
+    current = store.tile(identifier)
+    store.require_version(current, expected)
+    photo, matrix, residuals, pairs = detail_transform(current, photo_id, payload)
+    # Build the warped frame through the public path after a provisional write so
+    # the same validation and support rules apply as for full-plane registrations.
+    provisional = {
+        **current,
+        "detail_links": {
+            **current.get("detail_links", {}),
+            photo_id: {
+                "base_photo_id": current["plane"]["photo_id"],
+                "transform": [round(float(value), 10) for value in matrix.ravel()],
+            },
+        },
+    }
+    preview = specimen_frame(store.blobs, provisional, photo_id)
+    supported = float(preview.valid.mean())
+    if supported < MIN_DETAIL_SUPPORT:
+        raise InputError(
+            f"The aligned detail covers only {supported * 100:.2f}% of the plane; mark matching points more accurately."
+        )
+    max_residual = float(max(residuals)) if residuals else 0.0
+
+    def change(tile):
+        links = tile.setdefault("detail_links", {})
+        # A detail capture uses local point alignment instead of four plane corners.
+        tile["registrations"].pop(photo_id, None)
+        links[photo_id] = {
+            "base_photo_id": tile["plane"]["photo_id"],
+            "transform": [round(float(value), 10) for value in matrix.ravel()],
+            "point_pairs": pairs,
+            "point_residuals": residuals,
+            "max_residual": round(max_residual, 6),
+            "support_percent": round(100 * supported, 3),
+        }
+
+    return store.edit_tile(
+        identifier,
+        expected,
+        change,
+        "registration",
+        f"Aligned local detail capture · {photo['name']}",
+    )
+
+
+def remove_detail_link(store, identifier, photo_id, payload):
+    expected = model_version(payload)
+
+    def change(tile):
+        links = tile.get("detail_links", {})
+        if photo_id not in links:
+            raise InputError("This capture has no local detail alignment.")
+        links.pop(photo_id)
+
+    return store.edit_tile(identifier, expected, change, "registration", "Removed a local detail alignment")

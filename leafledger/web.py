@@ -22,6 +22,7 @@ from .evidence import (
 from .inspection import side_preview, viewing_pair
 from .art import base_rgba
 from .intake import MAX_ARCHIVE_BYTES, inspect_packet
+from .macro import plan_macro_frame, plan_overlay, preview_detail
 from .metrology import create_metrology
 from .model import (
     ANALYSIS_LABELS,
@@ -54,8 +55,10 @@ from .workspace import (
     import_photo,
     present_tile,
     preview_transform,
+    remove_detail_link,
     remove_photo,
     remove_region,
+    save_detail_link,
     save_plane,
     save_region,
     save_registration,
@@ -168,6 +171,36 @@ def register_specimens(api, store, heavy):
         with heavy:
             specimen = save_registration(store, specimen_id, photo_id, json_request())
         return jsonify(present_tile(specimen))
+
+    @api.put("/specimens/<specimen_id>/detail-links/<photo_id>")
+    def detail_link_save(specimen_id, photo_id):
+        with heavy:
+            specimen = save_detail_link(store, specimen_id, photo_id, json_request())
+        return jsonify(present_tile(specimen))
+
+    @api.delete("/specimens/<specimen_id>/detail-links/<photo_id>")
+    def detail_link_remove(specimen_id, photo_id):
+        return jsonify(present_tile(remove_detail_link(store, specimen_id, photo_id, json_request())))
+
+    @api.post("/specimens/<specimen_id>/detail-links/<photo_id>/preview")
+    def detail_link_preview(specimen_id, photo_id):
+        tile = store.tile(specimen_id)
+        with heavy:
+            image, diagnostics, _ = preview_detail(store.blobs, tile, photo_id, json_request())
+        response = image_response(image)
+        response.headers["X-Detail-Alignment"] = json.dumps(diagnostics, separators=(",", ":"))
+        return response
+
+    @api.post("/specimens/<specimen_id>/macro-plan")
+    def macro_plan(specimen_id):
+        tile = store.tile(specimen_id)
+        payload = json_request()
+        plan = plan_macro_frame(tile, payload)
+        if request.args.get("overlay") == "1":
+            from .geometry import specimen_frame
+            base = specimen_frame(store.blobs, tile)
+            return image_response(plan_overlay(base, plan, tile))
+        return jsonify(plan)
 
     @api.post("/specimens/<specimen_id>/geometry/<photo_id>/preview")
     def geometry_test(specimen_id, photo_id):

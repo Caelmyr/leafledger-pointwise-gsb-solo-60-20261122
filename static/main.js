@@ -19,6 +19,7 @@ let working=0;
 let travel=0;
 let dialogToken=0;
 let drawPoints=[];
+let drawPointsB=[];
 let drawLimit=0;
 let currentForm=null;
 let reviewUploads=[];
@@ -89,6 +90,8 @@ function imagesForCapture() {
       <p class="stage-foot">${photo.width} × ${photo.height} px · ${e(photo.working_color_space)}${tile.canvas_size&&canvas?` · Survey plane ${tile.canvas_size.join(" × ")} px`:""}</p>
       <div class="actions">${btn(photo.registration_state==="base"?"Mark survey corners":photo.registered_url?"Edit registration":"Register photo","geometry","secondary","frame")}
       ${photo.registration_state!=="base"?btn("Set as base","geometry-base","secondary"):""}
+      ${photo.registration_state==="unregistered"?btn("Align local detail (3 points)","detail-align","secondary","measure"):""}
+      ${btn("Plan macro frame","macro-plan","secondary","frame")}
       ${tile.photos.filter(item=>item.registered_url).length>1?btn("Compare registered views","compare","secondary","compare"):""}
       ${canModes?btn("Image quality","quality","secondary","plot"):""}${link("Download original",photo.original_url,"secondary","download")}</div>
     </section>`;
@@ -118,7 +121,7 @@ function regionPage() {
   const rows=tile.regions.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.name)}</strong><small>${e(state.config.region_purposes[item.purpose])}</small></div>
     ${btn("Edit","region-edit","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("");
   const gains=tile.calibration;
-  return `<div class="grid-detail"><section class="card"><div class="title-row"><h3>Sampling plane</h3>${current?btn("Draw region","region-add","primary","plus"):""}</div>
+  return `<div class="grid-detail"><section class="card"><div class="title-row"><h3>Sampling plane</h3><div class="actions">${current?btn("Draw region","region-add","primary","plus"):""}${current?btn("Plan macro frame","macro-plan","secondary","frame"):""}</div></div>
      ${current?`<figure class="stage">${img(current.registered_url+"&layer=regions",`Marked regions on ${tile.name}`)}</figure><p class="stage-foot">Region positions are saved in the registered survey plane.</p>`:empty("Set a base photograph from Captures.")}</section>
      <div class="stack"><section class="card"><h3>Saved regions</h3>${rows?`<div class="divider-list">${rows}</div>`:"<p class='soft'>Draw an inspection area, a coverage reference, or a patch to exclude.</p>"}</section>
      <section class="card"><h3>Neutral-card balance</h3>${gains?`<div class="metrics">${stat("Measured card",gains.before_swatch)}${stat("Balanced card",gains.after_swatch)}${stat("Unclipped card pixels",n(gains.card_samples,0))}</div>`:"<p class='soft'>Use an evenly lit neutral patch to balance this base capture.</p>"}
@@ -407,6 +410,46 @@ function prepareDrawing(chosen, limit) {
   drawUpdate();
 }
 
+function pairSvg(points) {
+  const coords=points.map(([x,y])=>[x*1000,y*1000]);
+  return coords.map(([x,y],index)=>
+    `<circle class="draw-point" cx="${x}" cy="${y}" r="11"/><text class="draw-label" x="${x+17}" y="${y+17}">${index+1}</text>`).join("");
+}
+
+function pairDrawing(imageA, altA, imageB, altB) {
+  return `<div class="pair-stage">
+    <figure class="stage"><figcaption>${e(altA)}</figcaption>
+      <div class="capture-drawing" id="draw-stage-a">${img(imageA,altA)}
+      <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" class="pair-overlay" id="draw-overlay-a"></svg></div></figure>
+    <figure class="stage"><figcaption>${e(altB)}</figcaption>
+      <div class="capture-drawing" id="draw-stage-b">${img(imageB,altB)}
+      <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" class="pair-overlay" id="draw-overlay-b"></svg></div></figure>
+  </div>`;
+}
+
+function preparePairDrawing(chosen, limit=6) {
+  drawPoints=(chosen||[]).map(pair=>[...pair.plane]);
+  drawPointsB=(chosen||[]).map(pair=>[...pair.capture]);
+  drawLimit=limit;
+  pairUpdate();
+}
+
+function pairUpdate() {
+  const a=q("#draw-overlay-a");
+  const b=q("#draw-overlay-b");
+  if (a) a.innerHTML=pairSvg(drawPoints);
+  if (b) b.innerHTML=pairSvg(drawPointsB);
+  const label=q("#draw-count");
+  if (label) label.textContent=`${Math.min(drawPoints.length,drawPointsB.length)} of at least 3 matching points marked`;
+}
+
+function stagePoint(event, stage) {
+  const rect=stage.getBoundingClientRect();
+  const u=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));
+  const v=Math.min(1,Math.max(0,(event.clientY-rect.top)/rect.height));
+  return [Number(u.toFixed(6)),Number(v.toFixed(6))];
+}
+
 function geometryForm(mode) {
   const item=currentPhoto();
   if (!item) throw Error("Select a photo to register.");
@@ -511,6 +554,60 @@ function pairForm() {
       parent.innerHTML=`<figure class="stage">${img(uri,"Registered pair comparison")}</figure>
         <div class="metrics">${stat("Shared pixels",n(support.support_overlap_px,0))}${stat("Edges compared",n(support.edge_positions_compared,0))}</div>`;
     },true);
+}
+
+function regionChoices(includeNone=false) {
+  const usable=state.tile.regions.filter(item=>item.purpose!=="ignore");
+  return (includeNone?option("","(none)",""):"")+usable.map(item=>option(item.id,item.name)).join("");
+}
+
+function macroPlanForm() {
+  if (!state.tile.plane) throw Error("Set a base photograph before planning a macro frame.");
+  if (!(state.tile.width_mm&&state.tile.height_mm)) throw Error("Enter the specimen width and height in millimetres first.");
+  if (state.tile.regions.filter(item=>item.purpose!=="ignore").length<1) throw Error("Draw the discoloration patch as a sampling region first.");
+  modal("Plan the macro camera position",`
+    <p class="notice">Enter the macro field size in millimetres. The planner keeps the priority region (the rare discoloration) as complete as possible, then captures as much of the secondary region (the vein tips) as the same frame allows. What stays outside is reported and marked.</p>
+    <div class="form-columns">
+      ${numField("Field width mm","width_mm",38,1,100000,0.1)}
+      ${numField("Field height mm","height_mm",28,1,100000,0.1)}
+      ${selectField("Priority region","primary_region_id",regionChoices(false))}
+      ${selectField("Secondary region","secondary_region_id",regionChoices(true))}
+    </div>
+    <div class="actions">${btn("Compute reachable frame","macro-compute","tiny secondary")}</div>
+    <div id="macro-result"></div>`,
+    "Use this position",async data=>{
+      const chosen=q("#macro-plan-frame");
+      if (!chosen) throw Error("Compute a reachable frame first.");
+      commitModal();
+      toast("Macro frame planned. The overlay shows what remains outside the field.");
+    },true);
+}
+
+function detailForm(photo) {
+  const base=state.tile.photos.find(item=>item.registration_state==="base");
+  if (!base) throw Error("Set a base capture before aligning a detail.");
+  const item=photo||currentPhoto();
+  if (!item||item.id===base.id) throw Error("Select the local detail photograph to align.");
+  state.capture=item.id;
+  const existing=state.tile.detail_links?.[item.id];
+  modal("Align local detail with three matching points",`
+    <p class="notice">The detail photo's corners are not visible in the survey photo, so mark the same three sites on both images. Click each matching location once per image, in the same order. Spread the points across the shared area (they must not be collinear). Up to six points are accepted for a least-squares fit.</p>
+    ${pairDrawing(base.registered_url,"Survey plane (where the original region was drawn)",item.preview_url,"Local detail photograph")}
+    <div class="actions">${btn("Clear points","draw-clear","tiny secondary")}${btn("Undo point","draw-undo","tiny ghost")}
+      ${btn("Preview alignment","detail-preview","tiny secondary")}<span class="soft" id="draw-count"></span></div>
+    <div id="detail-preview"></div>`,
+    "Save detail alignment",async ()=>{
+      const count=Math.min(drawPoints.length,drawPointsB.length);
+      if (count<3) throw Error("Mark at least three matching points on both images.");
+      const pairs=drawPoints.slice(0,count).map((plane,index)=>({plane,capture:drawPointsB[index]}));
+      const saved=await api(tileUrl()+"/detail-links/"+item.id,{method:"PUT",body:tileData({pairs})});
+      state.tile=saved;
+      await gatherTile();
+      commitModal();
+      toast("Detail aligned. Measurements now use only the co-located overlap; the rest stays marked unsupported.");
+      render();
+    },true);
+  preparePairDrawing(existing?.point_pairs||[],6);
 }
 
 function geometryMeasurementForm(mode) {
@@ -689,14 +786,70 @@ async function doAction(name,target) {
       preview.innerHTML=`<figure class="stage">${img(uri,"Proposed rectified photo")}</figure><p class="soft">Visible support ${e(result.headers.get("X-Specimen-Support"))}%</p>`;
     },
     compare:pairForm,
+    "macro-plan":macroPlanForm,
+    "macro-compute":async ()=>{
+      const data=parseDatesAndNumbers(formData(),["width_mm","height_mm"]);
+      if (!data.primary_region_id) throw Error("Choose the priority discoloration region.");
+      const stamp=dialogToken;
+      const [plan,overlayRes]=await Promise.all([
+        api(tileUrl()+"/macro-plan",{method:"POST",body:data}),
+        request(tileUrl()+"/macro-plan?overlay=1",{method:"POST",body:data}),
+      ]);
+      const uri=URL.createObjectURL(await overlayRes.blob());
+      if (stamp!==dialogToken) {URL.revokeObjectURL(uri);return;}
+      const host=q("#macro-result");
+      if (host.dataset.blob) URL.revokeObjectURL(host.dataset.blob);
+      host.dataset.blob=uri;
+      host.dataset.plan=JSON.stringify(plan);
+      host.id="macro-result";
+      const p=plan.primary, s=plan.secondary;
+      host.innerHTML=`<figure class="stage">${img(uri,"Reachable macro frame on the survey plane")}</figure>
+        <div class="metrics">
+          ${stat("Priority covered",percent(p.covered_percent))}
+          ${stat("Priority outside",n(p.outside_px)+" px")}
+          ${s?stat("Vein tips covered",s.covered_percent==null?"—":percent(s.covered_percent)):""}
+        </div>
+        <p class="notice">${p.fully_inside
+          ? "The whole discoloration patch fits inside the reachable frame."
+          : `The frame cannot hold the whole patch at ${plan.field_mm[0]} × ${plan.field_mm[1]} mm. The rectangle is placed to cover the maximum possible area (${p.covered_mm2} mm²); ${p.outside_mm2} mm² of the patch stays outside.`}
+        </p>
+        ${s?`<p class="soft">Vein-tip row: ${n(s.covered_px)} of ${n(s.total_px)} px inside; ${n(s.outside_px)} px remains unphotographed.</p>`:""}
+        <input type="hidden" id="macro-plan-frame">`;
+      q("#macro-plan-frame").value=JSON.stringify(plan.frame);
+    },
+    "detail-align":()=>detailForm(),
+    "detail-preview":async ()=>{
+      const count=Math.min(drawPoints.length,drawPointsB.length);
+      if (count<3) throw Error("Mark at least three matching points on both images.");
+      const pairs=drawPoints.slice(0,count).map((plane,index)=>({plane,capture:drawPointsB[index]}));
+      const item=currentPhoto();
+      const stamp=dialogToken;
+      const res=await request(tileUrl()+"/detail-links/"+item.id+"/preview",{method:"POST",body:{pairs}});
+      const uri=URL.createObjectURL(await res.blob());
+      if (stamp!==dialogToken) {URL.revokeObjectURL(uri);return;}
+      const diag=JSON.parse(res.headers.get("X-Detail-Alignment"));
+      const host=q("#detail-preview");
+      if (host.dataset.blob) URL.revokeObjectURL(host.dataset.blob);
+      host.dataset.blob=uri;
+      host.innerHTML=`<figure class="stage">${img(uri,"Detail warped onto the survey plane")}</figure>
+        <div class="metrics">${stat("Plane support",percent(diag.support_percent))}${stat("Max point residual",n(diag.max_residual,5))}</div>
+        <p class="soft">Only the colored, supported area is co-located with the survey; the rest of the plane is unsupported and will be marked unmeasured.</p>`;
+    },
     quality:qualityForm,
     "region-add":()=>regionForm(),
     "region-edit":()=>regionForm(state.tile.regions.find(item=>item.id===id)),
     "region-remove":()=>modal("Remove sampling region?",'<p>Saved measurements retain their snapshot of this region.</p>',"Remove region",async ()=>{
       await patchTile("/regions/"+id,"DELETE",{},"Sampling region removed.");
     }),
-    "draw-clear":()=>{drawPoints=[];drawUpdate();},
-    "draw-undo":()=>{drawPoints.pop();drawUpdate();},
+    "draw-clear":()=>{drawPoints=[];drawPointsB=[];drawUpdate();pairUpdate();},
+    "draw-undo":()=>{
+      if (q("#draw-stage-b")) {
+        if (drawPointsB.length>=drawPoints.length) drawPointsB.pop(); else drawPoints.pop();
+        pairUpdate();
+      } else {
+        drawPoints.pop();drawUpdate();
+      }
+    },
     neutral:neutralForm,
     "neutral-clear":()=>patchTile("/calibration","DELETE",{},"Neutral-card balance cleared."),
     "reference-add":refForm,
@@ -770,12 +923,21 @@ async function runAction(target) {
 document.addEventListener("click",event=>{
   const target=event.target.closest("[data-do]");
   if (target) {void runAction(target);return;}
+  const stageA=event.target.closest("#draw-stage-a");
+  const stageB=event.target.closest("#draw-stage-b");
+  if (stageA && drawPoints.length<drawLimit) {
+    drawPoints.push(stagePoint(event,stageA));
+    pairUpdate();
+    return;
+  }
+  if (stageB && drawPointsB.length<drawLimit) {
+    drawPointsB.push(stagePoint(event,stageB));
+    pairUpdate();
+    return;
+  }
   const drawing=event.target.closest("#draw-stage");
   if (drawing && drawPoints.length<drawLimit) {
-    const rect=drawing.getBoundingClientRect();
-    const u=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));
-    const v=Math.min(1,Math.max(0,(event.clientY-rect.top)/rect.height));
-    drawPoints.push([Number(u.toFixed(6)),Number(v.toFixed(6))]);
+    drawPoints.push(stagePoint(event,drawing));
     drawUpdate();
   }
 });

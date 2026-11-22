@@ -41,7 +41,7 @@ def selected_capture(tile, explicit, expected_role=None):
     plane = tile.get("plane")
     if not plane:
         raise InputError("Add a specimen photograph before measuring.")
-    registered = {plane["photo_id"], *tile["registrations"]}
+    registered = {plane["photo_id"], *tile["registrations"], *tile.get("detail_links", {})}
     if explicit:
         found = next((item for item in captures if item["id"] == explicit), None)
         if found is None:

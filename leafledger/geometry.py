@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
-from .model import InputError, MAX_REGISTERED_DIM, collection, numeric_pair, physical_scale
+from .model import InputError, MAX_REGISTERED_DIM, collection, dictionary, numeric_pair, physical_scale
 from .photos import open_working, linear_to_srgb, srgb_to_linear
 
 
@@ -145,6 +145,69 @@ def map_coordinates(matrix, target_x, target_y, source_width, source_height):
     return mapped_x * source_width - 0.5, mapped_y * source_height - 0.5
 
 
+def affine_fit(plane_points, capture_points):
+    """Least-squares affine map from registered plane coordinates to capture coordinates.
+
+    Both inputs are normalized (0..1) point pairs marked at the same three sites.
+    Returns the 3x3 matrix in the same plane-to-capture convention as ``homography``.
+    """
+    source = np.asarray(plane_points, dtype=np.float64)
+    target = np.asarray(capture_points, dtype=np.float64)
+    design = np.c_[source, np.ones(len(source))]
+    try:
+        coefficients, residuals, rank, _ = np.linalg.lstsq(design, target, rcond=None)
+    except np.linalg.LinAlgError as error:
+        raise InputError("The marked points cannot define a stable local transform.") from error
+    if rank < 3:
+        raise InputError("Mark three distinct, non-collinear points spread across the shared detail.")
+    if len(source) == 3 and np.linalg.det(design) == 0:
+        raise InputError("The three marked points are collinear. Spread them across the shared detail.")
+    linear = coefficients[:2, :].T
+    if abs(np.linalg.det(linear)) < 1e-6:
+        raise InputError("The marked points are nearly collinear. Spread them across the shared detail.")
+    matrix = np.eye(3, dtype=np.float64)
+    matrix[:2, :] = coefficients.T
+    if not np.all(np.isfinite(matrix)) or np.linalg.cond(matrix) > 2000:
+        raise InputError("The marked points define a nearly singular transform. Choose more spread-out sites.")
+    mapped = design @ coefficients
+    discrepancy = np.linalg.norm(mapped - target, axis=1)
+    return matrix, [round(float(value), 6) for value in discrepancy]
+
+
+def warp_detail(rgb, alpha, destination, transform):
+    """Warp a partial, locally registered capture onto the full specimen plane.
+
+    Mirrors :func:`warp_capture` for an affine plane-to-capture matrix; pixels that
+    fall outside the local photograph stay unsupported instead of being filled.
+    """
+    source_height, source_width = alpha.shape
+    width, height = destination
+    target_x = (np.arange(width, dtype=np.float32)[None, :] + 0.5) / width
+    rgb_working = srgb_to_linear(rgb)
+    weighted = rgb_working * alpha[:, :, None]
+    src_clip = (np.max(rgb, axis=2) >= 253 / 255) | (np.max(rgb, axis=2) <= 5 / 255)
+    linear = np.zeros((height, width, 3), dtype=np.float32)
+    coverage = np.zeros((height, width), dtype=bool)
+    clipped = np.zeros((height, width), dtype=bool)
+    for start in range(0, height, WARP_ROW_BLOCK):
+        stop = min(start + WARP_ROW_BLOCK, height)
+        target_y = (np.arange(start, stop, dtype=np.float32)[:, None] + 0.5) / height
+        src_x, src_y = map_coordinates(transform, target_x, target_y, source_width, source_height)
+        within = (src_x >= -0.5) & (src_x <= source_width - 0.5) & (src_y >= -0.5) & (src_y <= source_height - 0.5)
+        coordinates = (src_y, src_x)
+        opacity = ndimage.map_coordinates(alpha, coordinates, order=1, mode="nearest")
+        present = within & (opacity >= MIN_SUPPORT_ALPHA)
+        coverage[start:stop] = present
+        clipped[start:stop] = (
+            ndimage.map_coordinates(src_clip.astype(np.float32), coordinates, order=1, mode="nearest") > 0.025
+        ) & present
+        target = linear[start:stop]
+        for channel in range(3):
+            samples = ndimage.map_coordinates(weighted[:, :, channel], coordinates, order=1, mode="nearest")
+            np.divide(samples, opacity, where=present, out=target[:, :, channel])
+    return linear, coverage, clipped
+
+
 def warp_capture(rgb, alpha, destination, transform):
     source_height, source_width = alpha.shape
     width, height = destination
@@ -174,6 +237,24 @@ def warp_capture(rgb, alpha, destination, transform):
     return linear, coverage, clipped
 
 
+def point_pairs_parameter(value, *, minimum=3, maximum=6):
+    pairs = collection(value, "Corresponding points", minimum=minimum, maximum=maximum)
+    result = []
+    seen = set()
+    for index, pair in enumerate(pairs, start=1):
+        entry = dictionary(pair, f"Point pair {index}")
+        plane = numeric_pair(entry.get("plane"), f"Survey point {index}", lower=0, upper=1)
+        capture = numeric_pair(entry.get("capture"), f"Detail point {index}", lower=0, upper=1)
+        plane_key = (round(plane[0], 6), round(plane[1], 6))
+        capture_key = (round(capture[0], 6), round(capture[1], 6))
+        if plane_key in seen or capture_key in seen:
+            raise InputError("Point pairs cannot repeat the same site.")
+        seen.add(plane_key)
+        seen.add(capture_key)
+        result.append({"plane": plane, "capture": capture})
+    return result
+
+
 def specimen_frame(blobs, tile, photo_id=None):
     plane = tile.get("plane")
     if plane is None:
@@ -182,20 +263,29 @@ def specimen_frame(blobs, tile, photo_id=None):
     photo = next((item for item in tile["photos"] if item["id"] == identifier), None)
     if photo is None:
         raise InputError("The selected capture was removed from this specimen.")
+    detail = tile.get("detail_links", {}).get(identifier)
     if identifier == plane["photo_id"]:
         corners = plane["corners"]
+        transform = homography(DEFAULT_CORNERS, corners)
+        destination = tuple(plane["size"])
+        warp = warp_capture
+    elif detail is not None and detail.get("base_photo_id") == plane["photo_id"]:
+        transform = np.asarray(detail["transform"], dtype=np.float64).reshape(3, 3)
+        destination = tuple(plane["size"])
+        warp = warp_detail
     else:
         registration = tile["registrations"].get(identifier)
         if registration is None or registration["base_photo_id"] != plane["photo_id"]:
-            raise InputError("Mark corresponding corners on this capture before comparing illumination.")
+            raise InputError("Mark corresponding corners or three matching points on this capture before measuring it.")
         corners = registration["corners"]
-    transform = homography(DEFAULT_CORNERS, corners)
-    destination = tuple(plane["size"])
+        transform = homography(DEFAULT_CORNERS, corners)
+        destination = tuple(plane["size"])
+        warp = warp_capture
     rgb, alpha = open_working(blobs, photo)
-    linear, valid, clipped = warp_capture(rgb, alpha, destination, transform)
+    linear, valid, clipped = warp(rgb, alpha, destination, transform)
     if np.count_nonzero(valid) < 64:
         raise InputError("The marked specimen plane contains too few usable pixels.")
-    return SampleFrame(linear, valid, photo, tuple(transform.ravel()), physical_scale(tile, *destination), clipped)
+    return SampleFrame(linear, valid, photo, tuple(np.asarray(transform).ravel()), physical_scale(tile, *destination), clipped)
 
 
 def active_region(tile, region_id):
