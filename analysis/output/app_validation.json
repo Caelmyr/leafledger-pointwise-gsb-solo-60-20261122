@@ -1,0 +1,42 @@
+{
+  "validation": "passed",
+  "vertex_count": 40,
+  "app_geometry": {
+    "vector_outline_area": 6850.15373,
+    "raster_area": 6907.90596,
+    "raster_supported_area": 6907.90596,
+    "requested_pixels": 26322,
+    "supported_pixels": 26322,
+    "no_support_percent": 0.0,
+    "outside_or_excluded_holes_px": [],
+    "shape_centroid": [
+      0.261078,
+      0.311023
+    ],
+    "support_spread": {
+      "support_centroid_xy": [
+        83.30903,
+        74.39706
+      ],
+      "support_major_angle": 31.236,
+      "support_elongation": 3.6805
+    },
+    "units": "mm\u00b2",
+    "bounds": [
+      2.064,
+      23.3904,
+      167.7408,
+      128.6448
+    ],
+    "axis_width": 165.6768,
+    "axis_height": 105.2544
+  },
+  "split": {
+    "observed_area_mm2": 6367.02,
+    "inferred_area_mm2": 540.886,
+    "total_raster_area_mm2": 6907.906,
+    "app_polygon_raster_mm2": 6907.906,
+    "app_vector_outline_mm2": 6850.154,
+    "mm2_per_px": 0.262438
+  }
+}

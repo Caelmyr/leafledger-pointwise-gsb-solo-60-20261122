@@ -1,0 +1,15 @@
+{
+  "full_detail_mask_vs_true_target_dice": 0.9903,
+  "delivered_card_vs_true_target_dice": 0.9434,
+  "fragment_pixels_leaked_into_card": 0,
+  "fragment_leak_percent_of_card": 0.0,
+  "other_leaf_leak_px": 0,
+  "true_target_pixels_outside_card": 599,
+  "card_pixels_beyond_true_target": 2283,
+  "card_beyond_target_percent": 8.67,
+  "toothed_tip_recovered_percent": 87.02,
+  "inferred_pixels_inside_true_tape_percent": 94.37,
+  "observed_tissue_vs_true_visible_recall": 91.22,
+  "card_observed_plus_inferred_equals_raster": true,
+  "card_overshoot_cause": "Beyond-target pixels are straight-chord area between serration tips under the fixed 40-vertex card budget (the card approaches the convex hull); none are fragment or other-leaf pixels, which remain at zero."
+}

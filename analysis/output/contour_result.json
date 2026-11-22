@@ -1,0 +1,239 @@
+{
+  "plane": {
+    "width_px": 620,
+    "height_px": 472,
+    "width_mm": 320,
+    "height_mm": 240
+  },
+  "mm_per_px": [
+    0.5161290322580645,
+    0.5084745762711864
+  ],
+  "contour_vertices_normalized": [
+    [
+      0.01452,
+      0.09746
+    ],
+    [
+      0.00968,
+      0.09958
+    ],
+    [
+      0.00806,
+      0.10169
+    ],
+    [
+      0.00645,
+      0.10593
+    ],
+    [
+      0.00645,
+      0.11017
+    ],
+    [
+      0.00806,
+      0.11653
+    ],
+    [
+      0.0129,
+      0.13136
+    ],
+    [
+      0.01935,
+      0.13771
+    ],
+    [
+      0.0371,
+      0.1822
+    ],
+    [
+      0.05484,
+      0.20127
+    ],
+    [
+      0.05968,
+      0.2161
+    ],
+    [
+      0.08548,
+      0.24576
+    ],
+    [
+      0.09355,
+      0.27966
+    ],
+    [
+      0.12419,
+      0.31992
+    ],
+    [
+      0.15645,
+      0.34746
+    ],
+    [
+      0.19194,
+      0.37924
+    ],
+    [
+      0.23065,
+      0.41525
+    ],
+    [
+      0.28548,
+      0.44703
+    ],
+    [
+      0.35161,
+      0.47246
+    ],
+    [
+      0.37258,
+      0.48093
+    ],
+    [
+      0.40645,
+      0.49576
+    ],
+    [
+      0.42258,
+      0.5
+    ],
+    [
+      0.46452,
+      0.53602
+    ],
+    [
+      0.52419,
+      0.52754
+    ],
+    [
+      0.52097,
+      0.47034
+    ],
+    [
+      0.48387,
+      0.44915
+    ],
+    [
+      0.45645,
+      0.40042
+    ],
+    [
+      0.42419,
+      0.35381
+    ],
+    [
+      0.42419,
+      0.37924
+    ],
+    [
+      0.40484,
+      0.35593
+    ],
+    [
+      0.41774,
+      0.35169
+    ],
+    [
+      0.39677,
+      0.31356
+    ],
+    [
+      0.36452,
+      0.27754
+    ],
+    [
+      0.33065,
+      0.25212
+    ],
+    [
+      0.28548,
+      0.19703
+    ],
+    [
+      0.24839,
+      0.16949
+    ],
+    [
+      0.16935,
+      0.14831
+    ],
+    [
+      0.11774,
+      0.11229
+    ],
+    [
+      0.07742,
+      0.10169
+    ],
+    [
+      0.03226,
+      0.09746
+    ]
+  ],
+  "vertex_count": 40,
+  "edge_classes": [
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "inferred",
+    "inferred",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "inferred",
+    "inferred",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed",
+    "observed"
+  ],
+  "observed_edge_count": 36,
+  "inferred_edge_count": 4,
+  "raster_area_px": 26322,
+  "observed_area_px": 24261,
+  "inferred_area_px": 2061,
+  "vector_polygon_area_px": 26102.0,
+  "vector_vs_raster_area_percent": 99.16,
+  "raster_area_mm2": 6907.906,
+  "observed_area_mm2": 6367.02,
+  "inferred_area_mm2": 540.886,
+  "inferred_fraction_percent": 7.83,
+  "full_detail_mask_px": 24907,
+  "card_coverage_of_detail_percent": 105.68,
+  "detected_tape_px_bbox": [
+    232,
+    168,
+    262,
+    246
+  ],
+  "fitted_axis_angle_deg": 32.866,
+  "excluded_fragment_area_px": 4998,
+  "area_basis_note": "Single closed card polygon is the measurement basis; raster_area_mm2 is its pixel count and observed_area_mm2 + inferred_area_mm2 equals it exactly. inferred is the smooth envelope bridge and lies wholly within the mounting tape. vector_polygon_area is the shoelace area of the same polygon. full_detail_mask_px is the pixel-exact blade including every fine tooth; the 40-vertex card covers card_coverage_of_detail_percent, the difference being serration detail (not fragment or other leaf)."
+}

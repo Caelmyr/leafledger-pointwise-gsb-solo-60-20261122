@@ -1,0 +1,31 @@
+{
+  "scope": "left_target_leaf_only",
+  "applies_to_other_leaves_on_sheet": false,
+  "note": "The inferred area is the smooth envelope bridge behind the mounting tape that connects the visible blade body to the collinear toothed apex. It is confined to the tape footprint (plus a 1-px connectivity edge band) and is charged to this contour alone.",
+  "detected_tape_bbox_px": [
+    232,
+    168,
+    262,
+    246
+  ],
+  "inferred_polygon_edge_indices_1based": [
+    20,
+    21,
+    29,
+    30
+  ],
+  "observed_edge_count": 36,
+  "inferred_edge_count": 4,
+  "areas": {
+    "raster_total_mm2": 6907.906,
+    "observed_mm2": 6367.02,
+    "inferred_mm2": 540.886,
+    "inferred_fraction_percent": 7.83,
+    "vector_outline_mm2": 6850.169,
+    "units": "mm^2",
+    "mm2_per_px": 0.262438
+  },
+  "consistency_check": {
+    "observed_plus_inferred_equals_total": true
+  }
+}
