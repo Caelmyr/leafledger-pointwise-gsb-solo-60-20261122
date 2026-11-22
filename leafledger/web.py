@@ -7,6 +7,7 @@ from flask import Blueprint, Flask, Response, jsonify, request, send_file, send_
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from .analysis import approve_reference, evaluate
+from .balance import trust_overlay
 from .demo import load_training, preview_photo
 from .evidence import (
     artifact_json,
@@ -48,6 +49,7 @@ from .store import Store
 from .study import create_study, public_metrics
 from .workspace import (
     calibrate,
+    calibration_trust,
     clear_calibration,
     edit_photo,
     edit_specimen,
@@ -232,6 +234,15 @@ def register_specimens(api, store, heavy):
     @api.delete("/specimens/<specimen_id>/calibration")
     def calibration_remove(specimen_id):
         return jsonify(present_tile(clear_calibration(store, specimen_id, json_request())))
+
+    @api.get("/specimens/<specimen_id>/calibration/trust-map")
+    def calibration_trust_map(specimen_id):
+        with heavy:
+            package = calibration_trust(store, specimen_id)
+        if package is None:
+            raise MissingError("This specimen has no multi-card calibration with trust zones.")
+        frame, trust, record, zones, cards, linear = package
+        return image_response(trust_overlay(frame, linear, record, trust, zones, cards))
 
 
 def register_measurements(api, store, heavy):

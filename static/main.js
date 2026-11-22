@@ -118,12 +118,40 @@ function regionPage() {
   const rows=tile.regions.map(item=>`<div class="row"><div class="grow"><strong class="row-title">${e(item.name)}</strong><small>${e(state.config.region_purposes[item.purpose])}</small></div>
     ${btn("Edit","region-edit","tiny secondary",null,`data-id="${item.id}"`)}</div>`).join("");
   const gains=tile.calibration;
+  const cardRows=gains?.cards ? gains.cards.map(card=>{
+    const tone=card.passes_line?"ready":"caution";
+    const label=card.passes_line?`PASS · worst ${n(card.worst_neutrality_percent)}%`:`LIMITED · worst ${n(card.worst_neutrality_percent)}%`;
+    return `<div class="row"><span class="swatch-chip" style="background:${e(card.before_swatch)}"></span>
+      <div class="grow"><strong class="row-title">${e(card.name)}</strong>
+      <small>R vs G ${n(card.red_vs_green_percent)}% · B vs G ${n(card.blue_vs_green_percent)}% · line ${n(card.neutral_line_percent)}%</small></div>
+      ${badge(label,tone)}</div>`;
+  }).join("") : "";
+  const trust=gains?.trust_summary;
+  const trustBlock=trust ? `<div class="metrics">
+      ${stat("Trusted color zones",percent(100*trust.trusted_pixels/Math.max(1,trust.trusted_pixels+trust.calibration_limited_pixels)))}
+      ${stat("Calibration-limited",percent(100*trust.calibration_limited_pixels/Math.max(1,trust.trusted_pixels+trust.calibration_limited_pixels)))}
+      ${stat("Protected near-tip px",n(trust.tip_protected_pixels,0))}</div>
+    <p class="notice ${gains.all_cards_pass?"":"warn"}">${e(calibrationNotice(gains))}</p>
+    <figure class="stage">${img(`/api/specimens/${tile.id}/calibration/trust-map?v=${tile.version}`,"Trusted and calibration-limited color zones")}</figure>` : "";
+  const legacy=gains && !gains.cards;
   return `<div class="grid-detail"><section class="card"><div class="title-row"><h3>Sampling plane</h3>${current?btn("Draw region","region-add","primary","plus"):""}</div>
      ${current?`<figure class="stage">${img(current.registered_url+"&layer=regions",`Marked regions on ${tile.name}`)}</figure><p class="stage-foot">Region positions are saved in the registered survey plane.</p>`:empty("Set a base photograph from Captures.")}</section>
      <div class="stack"><section class="card"><h3>Saved regions</h3>${rows?`<div class="divider-list">${rows}</div>`:"<p class='soft'>Draw an inspection area, a coverage reference, or a patch to exclude.</p>"}</section>
-     <section class="card"><h3>Neutral-card balance</h3>${gains?`<div class="metrics">${stat("Measured card",gains.before_swatch)}${stat("Balanced card",gains.after_swatch)}${stat("Unclipped card pixels",n(gains.card_samples,0))}</div>`:"<p class='soft'>Use an evenly lit neutral patch to balance this base capture.</p>"}
-       <div class="actions">${btn("Balance neutral card","neutral","secondary","sample")}${gains?btn("Clear balance","neutral-clear","ghost"):""}</div>
+     <section class="card"><h3>Whole-specimen neutral balance</h3>
+       ${gains?`<div class="metrics">${legacy?stat("Measured card",gains.before_swatch):""}${legacy?stat("Balanced card",gains.after_swatch):""}${stat("Channel gains",(gains.gains||[]).map(v=>n(v,3)).join(" · "))}${stat("Target",n(gains.target,3))}</div>
+         ${cardRows?`<div class="divider-list">${cardRows}</div>`:""}${trustBlock}
+         <p class="soft">One set of gains corrects the entire specimen so real leaf color differences are preserved.</p>`
+         :"<p class='soft'>Mark each neutral card (cool-lamp side and warm-lamp side) and optionally a near-tip fading reference, then compute one whole-specimen correction.</p>"}
+       <div class="actions">${btn("Balance neutral cards","neutral","secondary","sample")}${gains?btn("Clear balance","neutral-clear","ghost"):""}</div>
      </section></div></div>`;
+}
+
+function calibrationNotice(gains) {
+  if (gains.all_cards_pass) {
+    return `All ${gains.cards.length} card(s) pass the ${n(gains.neutral_line*100)}% red/blue-to-green line under one correction. The full plane is a trusted color reference.`;
+  }
+  const failed=gains.cards.filter(c=>!c.passes_line).map(c=>c.name).join(", ");
+  return `Best-effort single correction retained. ${failed} stay(s) outside the 5% line. Hatched calibration-limited zones must not be read as leaf color difference; the protected near-tip stays trusted for later fading checks.`;
 }
 
 function optionInput(key,item) {
@@ -220,9 +248,10 @@ function tilePage() {
 
 function libraryPage() {
   const items=state.refs;
-  return `<header class="page-head"><div><h1>Reference library</h1><p>Approved color samples retain their capture, region, and neutral-card basis.</p></div></header>
+  return `<header class="page-head"><div><h1>Reference library</h1><p>Approved color samples retain their capture, region, neutral-card basis and trusted color zones.</p></div></header>
     ${items.length?`<div class="collection">${items.map(ref=>`<article class="card stack">${img(`/api/library/${ref.id}/image`,ref.title,'loading="lazy"')}
     <h3>${e(ref.title)}</h3><p>${e(ref.family || ref.specimen.name)} · ${e(ref.fingerprint.swatch)}</p>
+    ${ref.trust_signature?badge(ref.trust_signature.all_cards_pass?"Trusted color zones":"Calibration-limited zones",ref.trust_signature.all_cards_pass?"ready":"caution"):badge("No zone partition","caution")}
     <div class="actions">${link("Open specimen","#tile:"+ref.tile_id,"secondary","tiles")}${btn("Retire","reference-retire","ghost",null,`data-id="${ref.id}"`)}</div></article>`).join("")}</div>`:empty("Approve a visual reference from a specimen with a registered capture.",link("Open specimens","#collection","primary","tiles"))}`;
 }
 
@@ -471,19 +500,41 @@ function lineForm() {
 }
 
 function neutralForm() {
-  const available=state.tile.regions.filter(item=>item.purpose==="neutral");
-  if (!available.length) throw Error("Draw a region marked Neutral color card first.");
-  modal("Balance neutral card",selectField("Card region","region_id",available.map(item=>option(item.id,item.name)).join(""))+
-    numField("Linear target","target",0.18,0.08,0.8,0.01)+
-    '<p class="soft">Target is a linear-image value. Sampling uses the unclipped center of the marked card.</p>',
-    "Save balance",async data=>patchTile("/calibration","PUT",parseDatesAndNumbers(data,["target"]),"Neutral-card balance saved."));
+  const cards=state.tile.regions.filter(item=>item.purpose==="neutral");
+  if (!cards.length) throw Error("Draw at least one region marked Neutral color card first.");
+  const tips=state.tile.regions.filter(item=>item.purpose==="tip");
+  const previous=new Set(state.tile.calibration?.card_region_ids || (state.tile.calibration?.region_id ? [state.tile.calibration.region_id] : []));
+  const checked=id=>previous.size===0 || previous.has(id) ? " checked" : "";
+  const cardChoices=cards.map(item=>`<label class="row field check"><input type="checkbox" name="region_ids" value="${item.id}"${checked(item.id)}>
+    <span class="grow">${e(item.name)}<br><small>${e(state.config.region_purposes.neutral)}</small></span></label>`).join("");
+  const tipChoices=option("","No protected near-tip region",null)+tips.map(item=>option(item.id,item.name,state.tile.calibration?.tip_region_id||null)).join("");
+  modal("Balance neutral cards",`
+    <p class="notice">Select every same-batch neutral card on the sheet (one at each lamp). A single set of channel gains is fit across all selected cards and applied to the whole specimen, preserving real leaf color differences.</p>
+    <div class="divider-list scroll-list">${cardChoices}</div>
+    ${tips.length?selectField("Protected near-tip fading reference","tip_region_id",tipChoices):'<p class="soft">Draw a region marked Near-tip fading reference to keep that blade segment trusted even if a card misses the 5% line.</p>'}
+    ${numField("Linear target","target",state.tile.calibration?.target??0.18,0.08,0.8,0.01)}
+    <p class="soft">Each card must end with red and blue within 5% of green. If one global fit cannot satisfy every card, the best-effort correction is still saved and calibration-limited zones are marked separately.</p>`,
+    "Save balance",async data=>{
+      const region_ids=data.getAll("region_ids");
+      if (!region_ids.length) throw Error("Select at least one neutral card region.");
+      await patchTile("/calibration","PUT",{
+        region_ids, target:Number(data.get("target")),
+        tip_region_id:data.get("tip_region_id")||null,
+      },"Whole-specimen neutral balance saved.");
+    });
 }
 
 function refForm() {
   if (!state.tile.plane) throw Error("Add a specimen photo before approving a reference.");
+  const cal=state.tile.calibration;
+  const zoneHint=cal?.cards
+    ? (cal.all_cards_pass
+      ? "The whole plane is trusted; the selected region freezes a reference across the 5% line."
+      : "Only trusted zones and the protected near-tip can be approved. Calibration-limited areas are excluded so a failed card is never read as leaf color.")
+    : "Save a whole-specimen neutral balance first so the reference records its trusted color zones.";
   modal("Approve visual reference",`${textField("Reference name","title",state.tile.name,'required maxlength="100"')}
     ${textField("Reference series","family",state.tile.glaze,'maxlength="100"')}${selectField("Region","region_id",regions())}
-    ${areaField("Notes","notes","",1200)}<p class="notice">The selected image and measured color remain attached to the reference if the specimen later changes.</p>`,
+    ${areaField("Notes","notes","",1200)}<p class="notice">${e(zoneHint)}</p><p class="notice">The selected image and measured color remain attached to the reference if the specimen later changes.</p>`,
     "Approve reference",async data=>{
       await api("/api/library",{method:"POST",body:{...plainData(data),tile_id:state.tile.id}});
       await gatherTile();

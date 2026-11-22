@@ -33,6 +33,7 @@ class DemoSpecimen:
     firing: str
     batch: str
     colors: tuple
+    lamp_strength: float = 0.035
 
 
 SERIES = (
@@ -44,6 +45,8 @@ SERIES = (
                 ((77, 82, 47), (116, 118, 70), (140, 142, 83))),
     DemoSpecimen(94, "Red-edged pear", "Rosaceae", "Ovate", "April imaging", "Folio 31",
                 ((81, 72, 43), (132, 126, 72), (158, 151, 98))),
+    DemoSpecimen(203, "Split-lamp goldenrod", "Asteraceae", "Lanceolate", "Dual-lamp imaging", "Folio 47",
+                ((88, 94, 41), (132, 138, 66), (166, 168, 96)), lamp_strength=0.14),
 )
 
 
@@ -76,12 +79,21 @@ def surface_palette(colors, values):
     ).astype(np.float32)
 
 
-def neutral_card(diffuse, roughness, x, y):
-    sample = (x >= 0.07) & (x <= 0.165) & (y >= 0.844) & (y <= 0.961)
-    border = (x >= 0.063) & (x <= 0.172) & (y >= 0.835) & (y <= 0.968) & ~sample
+def neutral_card(diffuse, roughness, x, y, bounds):
+    left, right, top, bottom = bounds
+    sample = (x >= left) & (x <= right) & (y >= top) & (y <= bottom)
+    border = (
+        (x >= left - 0.007) & (x <= right + 0.007)
+        & (y >= top - 0.009) & (y <= bottom + 0.007)
+        & ~sample
+    )
     diffuse[sample] = np.array([0.194, 0.172, 0.155])
     diffuse[border] *= 0.70
     roughness[sample] = 0.76
+
+
+LEFT_CARD = (0.070, 0.165, 0.844, 0.961)
+RIGHT_CARD = (0.826, 0.921, 0.844, 0.961)
 
 
 def blade_outline(x, y, seed):
@@ -165,7 +177,8 @@ def bake_field(specimen):
     diffuser = sheet * (1 - blade[..., None]) + pigment * blade[..., None]
     diffuser[tabs] = .58 * diffuser[tabs] + np.array([.31, .29, .209])
     roughness = np.clip(.85 + .045 * mottling - .29 * blade - .22 * tabs, .19, .96)
-    neutral_card(diffuser, roughness, x, y)
+    neutral_card(diffuser, roughness, x, y, LEFT_CARD)
+    neutral_card(diffuser, roughness, x, y, RIGHT_CARD)
     relief = blade * (.06 + .033 * mottling) + .29 * vascular + .17 * tabs - .17 * specks
     relief += .22 * folded + .014 * broad
     return LeafField(np.clip(diffuser, 0, 1), relief, blade, vascular, roughness, x, y)
@@ -182,7 +195,21 @@ def gloss_reflection(field, role):
     return intensity * (1 - field.matte_veins * 0.58)
 
 
-def light_field(field, role):
+def lamp_split(field, strength):
+    """Cool lamp toward the left, warm lamp toward the right, blended at mid-plane.
+
+    strength scales the per-channel color imbalance. Mild training folios stay
+    inside the 5% neutrality line after a global fit; the stress folio does not.
+    """
+    x = field.u
+    side = np.clip(0.5 - x, -0.5, 0.5) * 2.0  # +1 at left edge, -1 at right edge
+    red = 1.0 - strength * side
+    green = np.ones_like(x)
+    blue = 1.0 + strength * side
+    return np.stack((red, green, blue), axis=2).astype(np.float32)
+
+
+def light_field(field, role, lamp_strength=0.035):
     x, y = field.u, field.v
     dy, dx = np.gradient(0.92 * field.height)
     broad = 0.93 + 0.13 * (1 - y) - 0.08 * (x - 0.5) ** 2
@@ -196,6 +223,7 @@ def light_field(field, role):
         reflection = gloss_reflection(field, role)
         exposure = 0.88 if role == "cross" else 1.09 if role == "parallel" else 1.0
         rgb = field.diffuse * (broad * side * exposure)[:, :, None]
+        rgb *= lamp_split(field, lamp_strength)
         rgb += reflection[:, :, None] * np.array([0.69, 0.79, 0.82], dtype=np.float32)
     return np.clip(rgb, 0, 1)
 
@@ -245,7 +273,7 @@ def warp_to_photo(array, corners, photo_size, seed):
 
 
 def render_photo(field, role, specimen):
-    linear = light_field(field, role)
+    linear = light_field(field, role, specimen.lamp_strength)
     image = warp_to_photo(linear, POSES[role], PHOTO_SIZE, specimen.seed)
     array = np.rint(np.clip(image, 0, 1) * 255).astype(np.uint8)
     return Image.fromarray(array)
@@ -263,7 +291,9 @@ def training_regions():
         rectangle("Mounted leaf and notes", "inspection", 0.06, 0.07, 0.946, 0.818),
         rectangle("Intact blade", "glazed", 0.409, 0.385, 0.458, 0.428),
         rectangle("Mounting sheet", "bare", 0.32, 0.69, 0.55, 0.755),
-        rectangle("Neutral card", "neutral", 0.086, 0.858, 0.15, 0.943),
+        rectangle("Left neutral card", "neutral", 0.086, 0.858, 0.15, 0.943),
+        rectangle("Right neutral card", "neutral", 0.842, 0.858, 0.906, 0.943),
+        rectangle("Near-leaf-tip fading reference", "tip", 0.762, 0.430, 0.838, 0.560),
         rectangle("Image scale", "ignore", 0.478, 0.883, 0.663, 0.941),
     ]
 

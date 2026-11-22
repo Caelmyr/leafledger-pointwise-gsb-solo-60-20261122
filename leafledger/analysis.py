@@ -10,6 +10,7 @@ from .art import (
     signed_overlay,
     stored_preview,
 )
+from .balance import apply_trust, reconstruct_trust, trust_note
 from .color import (
     capture_basis,
     compare_reference,
@@ -17,6 +18,7 @@ from .color import (
     reference_fingerprint,
     reference_map,
     summarize_colors,
+    trusted_fingerprint,
 )
 from .condition import aggregate_candidates, scan_marking, survey_joint
 from .coverage import measure_coverage
@@ -111,13 +113,35 @@ def reference_color_sample(store, tile, photo_id, chosen_region, apply_neutral):
     domain = region_domain(frame.extent, tile, region)
     valid = analysis_mask(frame, domain, minimum=80, allow_clipped=False)
     linear, correction = corrected_linear(tile, frame, apply_neutral)
+    trust = reconstruct_trust(tile, correction, frame.extent) if correction else None
+    fingerprint = (
+        trusted_fingerprint(linear, valid, trust) if trust is not None
+        else reference_fingerprint(linear, valid)
+    )
+    trust_signature = trust_record_signature(correction)
     return {
-        "fingerprint": reference_fingerprint(linear, valid),
+        "fingerprint": fingerprint,
         "basis": capture_basis(tile, frame, correction),
+        "trust_signature": trust_signature,
+        "trust_note": trust_note(correction),
         "region": region,
         "source": capture_provenance(frame),
         "specimen": specimen_provenance(tile),
         "annotated_digest": stored_preview(annotated_regions(frame, [region] if region else [], linear), store.blobs),
+    }
+
+
+def trust_record_signature(correction):
+    if not correction or correction.get("schema") != "leafledger.balance.v2":
+        return None
+    return {
+        "schema": correction["schema"],
+        "photo_id": correction["photo_id"],
+        "card_region_ids": list(correction["card_region_ids"]),
+        "tip_region_id": correction.get("tip_region_id"),
+        "all_cards_pass": bool(correction["all_cards_pass"]),
+        "grid_count": correction.get("grid_count"),
+        "neutral_line": correction.get("neutral_line"),
     }
 
 
@@ -171,7 +195,7 @@ def formula_scale(values, support, floor):
     return max(float(np.quantile(available, 0.97)), floor) if len(available) else floor
 
 
-def compute_single(store, tile, frame, region, area, linear, correction, params, reference):
+def compute_single(store, tile, frame, region, area, linear, correction, params, reference, trust=None):
     kind = params["kind"]
     options = params["options"]
     support = analysis_mask(frame, area, allow_clipped=False)
@@ -183,9 +207,11 @@ def compute_single(store, tile, frame, region, area, linear, correction, params,
         metrics, image = operation(frame, area, linear, options)
         return metrics, image, None
     if kind == "color":
-        metrics, map_values = summarize_colors(linear, support, options["grid"])
-        scale = formula_scale(map_values, support, 6)
-        image = magnitude_overlay(frame, map_values, support, scale, source=linear, unknown=area & ~support)
+        metrics, map_values = summarize_colors(linear, support, options["grid"], trust, correction)
+        color_support = apply_trust(support, trust)[0] if trust is not None else support
+        scale = formula_scale(map_values, color_support, 6)
+        unknown = (area & ~support) | limited_unknown(area, trust)
+        image = magnitude_overlay(frame, map_values, color_support, scale, source=linear, unknown=unknown)
         return metrics, image, theoretical_legend(kind, scale)
     if kind == "coverage":
         unrestricted = region_domain(frame.extent, tile)
@@ -210,17 +236,38 @@ def compute_single(store, tile, frame, region, area, linear, correction, params,
         image = profile_overlay(frame, metrics["endpoints"], options["band_pixels"], linear)
         return metrics, image, None
     if kind == "reference":
-        fingerprint = reference_fingerprint(linear, support)
+        if trust is not None:
+            fingerprint = trusted_fingerprint(linear, support, trust)
+            trusted_support = apply_trust(support, trust)[0]
+        else:
+            fingerprint = reference_fingerprint(linear, support)
+            trusted_support = support
         basis = capture_basis(tile, frame, correction)
-        metrics = compare_reference(fingerprint, reference["fingerprint"], basis, reference["basis"])
+        this_signature = trust_record_signature(correction)
+        metrics = compare_reference(
+            fingerprint,
+            reference["fingerprint"],
+            basis,
+            reference["basis"],
+            this_signature,
+            reference.get("trust_signature"),
+        )
         metrics["reference_title"] = reference["title"]
         metrics["reference_id"] = reference["id"]
         metrics["reference_image"] = reference["annotated_digest"]
         metrics["reference_region"] = reference["region"]
         map_values = reference_map(linear, reference["fingerprint"])
-        scale = formula_scale(map_values, support, 12)
-        return metrics, magnitude_overlay(frame, map_values, support, scale), theoretical_legend(kind, scale)
+        scale = formula_scale(map_values, trusted_support, 12)
+        unknown = (area & ~support) | limited_unknown(area, trust)
+        return metrics, magnitude_overlay(frame, map_values, trusted_support, scale, unknown=unknown), theoretical_legend(kind, scale)
     raise RuntimeError(f"Unsupported image measurement: {kind}.")
+
+
+def limited_unknown(area, trust):
+    """Mask for pixels excluded from the color read because calibration is limited."""
+    if trust is None:
+        return None
+    return area & trust["limited"]
 
 
 def compute_pair(tile, first, second, area, params):
@@ -264,9 +311,13 @@ def evaluate(store, tile_id, payload):
     linear = frame.linear
     if pair is not None:
         metrics, picture, legend = compute_pair(tile, frame, pair, area, params)
+        trust = None
     else:
         linear, correction = corrected_linear(tile, frame, params["apply_neutral"])
-        metrics, picture, legend = compute_single(store, tile, frame, region, area, linear, correction, params, reference)
+        trust = reconstruct_trust(tile, correction, frame.extent) if correction else None
+        metrics, picture, legend = compute_single(
+            store, tile, frame, region, area, linear, correction, params, reference, trust,
+        )
     result = {
         "tile_id": tile_id,
         "source_version": tile["version"],
@@ -285,12 +336,15 @@ def evaluate(store, tile_id, payload):
             "region": region,
             "exclusions": [item for item in tile["regions"] if item["purpose"] == "ignore"],
             "neutral_card": correction,
+            "color_trust_signature": trust_record_signature(correction),
+            "color_trust_note": trust_note(correction),
             "reference": {
                 "id": reference["id"],
                 "version": reference["version"],
                 "specimen": reference["specimen"],
                 "capture": reference["source"],
                 "basis": reference["basis"],
+                "trust_signature": reference.get("trust_signature"),
             } if reference else None,
         },
         "pictures": {

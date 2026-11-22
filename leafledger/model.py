@@ -36,6 +36,7 @@ REGION_PURPOSES = {
     "bare": "Mounting sheet sample",
     "glazed": "Intact blade sample",
     "neutral": "Neutral color card",
+    "tip": "Near-tip fading reference",
     "ignore": "Exclude from measurement",
 }
 ANALYSIS_LABELS = {

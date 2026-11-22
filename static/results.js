@@ -3,10 +3,31 @@ import {badge, btn, e, img, link, n, percent, plot, stat, table, date, dots} fro
 const colors = ["#58836b","#b26a4a","#818d40","#786f99"];
 const layers = {overlay:"Measurement map",source:"Source plane",paired:"Paired plane",reference:"Reference image"};
 
+function neutralLabel(record) {
+  const card = record.provenance.neutral_card;
+  if (!card) return "Uncorrected";
+  if (card.cards) return `${card.cards.length} card(s) · ${card.all_cards_pass ? "all pass 5% line" : "calibration-limited zones"}`;
+  return card.before_swatch || "Single-card balance";
+}
+
+function trustPanel(m) {
+  const z = m.color_zone_support;
+  if (!z) return "";
+  const limited = z.calibration_limited_percent > 0;
+  const cardRows = z.cards ? `<details><summary>Neutral card 5% line</summary>${table(
+    ["Card","R vs G","B vs G","Worst","Status"],
+    z.cards.map(c=>[c.name,`${n(c.red_vs_green_percent)}%`,`${n(c.blue_vs_green_percent)}%`,`${n(c.worst_neutrality_percent)}%`,c.passes_line?"PASS":"LIMITED"]),
+  )}</details>` : "";
+  return `<div class="metrics">${stat("Trusted color zones",percent(z.trusted_percent))}${stat("Calibration-limited",percent(z.calibration_limited_percent))}</div>
+    <p class="notice ${limited?"warn":""}">${limited
+      ? "Hatched calibration-limited pixels are excluded from this color read because their card misses the 5% line. Do not treat them as leaf color difference."
+      : "All measured pixels sit in trusted color zones backed by a card across the 5% neutrality line."}</p>${cardRows}`;
+}
+
 export function metricSet(record) {
   const m = record.metrics;
   const rows = {
-    color: () => [["Median L*",n(m.median_lab[0])],["Within-plane p90 ΔE",n(m.delta_e_from_tile_median["90"])],["Pixels measured",n(m.pixels,0)]],
+    color: () => [["Median L*",n(m.median_lab[0])],["Within-plane p90 ΔE",n(m.delta_e_from_tile_median["90"])],["Trusted pixels",n(m.pixels,0)],...(m.color_zone_support?[["Calibration-limited",percent(m.color_zone_support.calibration_limited_percent)]]:[])],
     coverage: () => [["Blade",percent(m.percent.glazed)],["Mount",percent(m.percent.bare)],["Mixed",percent(m.percent.mixed)],["Unmeasured",percent(m.percent.unmeasured)]],
     defects: () => {
       const reviewed = Object.values(record.decisions);
@@ -18,7 +39,7 @@ export function metricSet(record) {
     craze: () => [["Trace length",`${n(m.network_length)} ${m.length_unit}`],["Junctions",n(m.junctions,0)],["Closed cells",n(m.closed_cell_count,0)]],
     rim: () => [["Rim median ΔE",n(m.all_edges.median_from_center_delta_e)],["Rim pixels",n(m.all_edges.pixels,0)],["Interior L*",n(m.interior.median_lab[0])]],
     profile: () => [["Distance",`${n(m.line_length)} ${m.distance_unit}`],["Valid stations",`${m.supported_stations}/${m.requested_stations}`],["Median L*",n(m.features.median_lightness)]],
-    reference: () => [["Specimen to reference ΔE",n(m.delta_e76)],["Lightness difference",n(m.delta_lab[0])],["Dispersion difference",n(m.dispersion_delta)]],
+    reference: () => [["Specimen to reference ΔE",n(m.delta_e76)],["Lightness difference",n(m.delta_lab[0])],["Dispersion difference",n(m.dispersion_delta)],["Same trusted zones",m.same_trusted_zones?"Yes":"No"]],
     marking: () => [["Measured stations",percent(m.observed_percent)],["Midrib among measured",percent(m.midrib_percent_of_observed)],["Runs",m.runs.length]],
     joint: () => [["Measured stations",m.measured_stations],["Unmeasured stations",m.unmeasured_stations],["Median absolute contrast",n(m.median_absolute_step,4)]],
     blade: () => [["Marked axis",`${n(m.axis_length)} ${m.length_unit}`],["Largest visible width",m.maximum_width==null?"—":`${n(m.maximum_width)} ${m.length_unit}`],["Supported sections",`${m.observed_stations}/${m.requested_stations}`]],
@@ -37,7 +58,7 @@ function legend(record) {
 }
 
 function colorDetail(m) {
-  return `<h3>Color palette</h3><div class="swatches">${m.palette.map(item=>dots(percent(item.coverage_percent), item.swatch)).join(" ")}</div>
+  return `${trustPanel(m)}<h3>Color palette</h3><div class="swatches">${m.palette.map(item=>dots(percent(item.coverage_percent), item.swatch)).join(" ")}</div>
     <details><summary>Spatial cells</summary>${table(["Column, row","Pixels","Median Lab","From median ΔE"], m.cells.map(item=>[item.cell.join(", "),item.pixels,item.lab.map(val=>n(val)).join(" / "),n(item.delta_from_center)]))}</details>`;
 }
 
@@ -122,7 +143,8 @@ function rimDetail(m) {
 
 function referenceDetail(m) {
   return `<h3>${e(m.reference_title)}</h3>
-    <div class="metrics">${stat("Specimen",m.specimen.swatch)}${stat("Approved reference",m.reference.swatch)}</div>
+    <div class="metrics">${stat("Specimen",m.specimen.swatch)}${stat("Approved reference",m.reference.swatch)}${stat("Trusted px",n(m.specimen.trusted_pixels??m.specimen.supported_pixels,0))}${stat("Limited px",n(m.specimen.calibration_limited_pixels??0,0))}</div>
+    <p class="notice ${m.same_trusted_zones?"":"warn"}">${e(m.zone_note)}</p>
     <p class="notice">${e(m.capture_note)}</p>`;
 }
 
@@ -151,7 +173,8 @@ export function resultCard(record, layer, currentRevision) {
       ["Photo digest",record.provenance.photo.original_digest],
       ["Supported area",percent(record.support.available_percent)],
       ["Clipped pixels",record.support.clipped_pixels],
-      ["Neutral correction",record.provenance.neutral_card?.before_swatch || "Uncorrected"],
+      ["Neutral correction",neutralLabel(record)],
+      ["Calibration zones",record.provenance.color_trust_note || "Uncorrected"],
     ])}</details>
     <div class="actions">${link("Metrics CSV",path+"/metrics.csv","secondary","download")}${btn("Pin evidence","pin", "primary","archive")}</div>
   </section>`;

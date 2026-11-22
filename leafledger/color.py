@@ -110,6 +110,13 @@ def calibration_for(tile, frame):
     record = tile.get("calibration")
     if not record or frame.photo["id"] != record["photo_id"]:
         return None
+    if record.get("schema") == "leafledger.balance.v2":
+        if record["plane_size"] != list(frame.extent) or record["plane_corners"] != tile["plane"]["corners"]:
+            return None
+        region_lookup = {region["id"]: region["vertices"] for region in tile["regions"]}
+        if any(region_id not in region_lookup for region_id in record["card_region_ids"]):
+            return None
+        return record
     if record["plane_size"] != list(frame.extent) or record["plane_corners"] != tile["plane"]["corners"]:
         return None
     selected = next(
@@ -186,24 +193,32 @@ def dominant_swatches(lab, support, *, count=5):
     return result
 
 
-def summarize_colors(linear, support, grid_count):
+def summarize_colors(linear, support, grid_count, trust=None, calibration=None):
+    from .balance import apply_trust, trust_metrics
     lab_image = linear_lab(linear)
-    colors = lab_image[support]
+    trusted_support, limited_support = apply_trust(support, trust)
+    color_support = trusted_support if trust is not None else support
+    if int(np.count_nonzero(color_support)) < 40:
+        raise InputError("Too few trusted color pixels remain after the calibration-zone partition.")
+    colors = lab_image[color_support]
     center = np.median(colors, axis=0)
     distances = delta_e(lab_image, center)
     representative = swatch(lab_linear(center))
-    quantiles = quantile_rows(distances[support], (0.25, 0.50, 0.90, 0.95, 0.99))
-    return {
+    quantiles = quantile_rows(distances[color_support], (0.25, 0.50, 0.90, 0.95, 0.99))
+    summary = {
         "swatch": representative,
         "median_lab": float_list(center),
         "lightness": quantile_rows(colors[:, 0]),
         "chroma": quantile_rows(np.linalg.norm(colors[:, 1:], axis=1)),
         "delta_e_from_tile_median": quantiles,
-        "cells": cell_summaries(lab_image, support, grid_count, center),
-        "palette": dominant_swatches(lab_image, support),
-        "pixels": int(np.count_nonzero(support)),
+        "cells": cell_summaries(lab_image, color_support, grid_count, center),
+        "palette": dominant_swatches(lab_image, color_support),
+        "pixels": int(np.count_nonzero(color_support)),
         "coverage_percent": round(100 * np.mean(support), 2),
-    }, distances
+    }
+    if trust is not None:
+        summary["color_zone_support"] = trust_metrics(support, trusted_support, limited_support, calibration)
+    return summary, distances
 
 
 def reference_fingerprint(linear, support):
@@ -222,13 +237,25 @@ def reference_fingerprint(linear, support):
     }
 
 
-def compare_reference(fingerprint, reference, this_basis, reference_basis):
+def trusted_fingerprint(linear, support, trust):
+    """Fingerprint computed only on pixels whose color calibration is trusted."""
+    from .balance import apply_trust, require_trusted
+    trusted, limited = apply_trust(support, trust)
+    require_trusted(trusted, "The reference region")
+    fingerprint = reference_fingerprint(linear, trusted)
+    fingerprint["trusted_pixels"] = int(np.count_nonzero(trusted))
+    fingerprint["calibration_limited_pixels"] = int(np.count_nonzero(limited))
+    return fingerprint
+
+
+def compare_reference(fingerprint, reference, this_basis, reference_basis, this_trust=None, reference_trust=None):
     observed = np.asarray(fingerprint["median_lab"])
     approved = np.asarray(reference["median_lab"])
     delta = observed - approved
     light_delta = np.asarray(fingerprint["lightness_10_50_90"]) - np.asarray(reference["lightness_10_50_90"])
     chroma_delta = np.asarray(fingerprint["chroma_10_50_90"]) - np.asarray(reference["chroma_10_50_90"])
     limitation = matching_basis(this_basis, reference_basis)
+    zone = zone_comparison(this_trust, reference_trust)
     return {
         "specimen": fingerprint,
         "reference": reference,
@@ -238,7 +265,42 @@ def compare_reference(fingerprint, reference, this_basis, reference_basis):
         "chroma_quantile_delta": float_list(chroma_delta),
         "dispersion_delta": round(fingerprint["dispersion"] - reference["dispersion"], 3),
         "capture_note": limitation,
+        "zone_note": zone["note"],
+        "same_trusted_zones": zone["same_zones"],
+        "trusted_zone": zone["current"],
+        "reference_zone": zone["approved"],
     }
+
+
+def zone_comparison(this_trust, reference_trust):
+    current = this_trust or None
+    approved = reference_trust or None
+    if current is None and approved is None:
+        return {
+            "same_zones": True,
+            "note": "Neither side records a calibration-zone partition; the full requested region was compared.",
+            "current": None,
+            "approved": None,
+        }
+    if current is None or approved is None:
+        return {
+            "same_zones": False,
+            "note": "Only one side of this match carries calibration trust zones. Re-run the side without zones on the same calibrated sample.",
+            "current": current,
+            "approved": approved,
+        }
+    same = (
+        current["card_region_ids"] == approved["card_region_ids"]
+        and current.get("tip_region_id") == approved.get("tip_region_id")
+        and current.get("grid_count") == approved.get("grid_count")
+        and current["photo_id"] == approved["photo_id"]
+    )
+    note = (
+        "This match reuses the same card zones and protected near-tip reference as the approved sample."
+        if same
+        else "The calibration trust zones differ from the approved sample. Re-check on the same card and tip regions before interpreting color distance."
+    )
+    return {"same_zones": same, "note": note, "current": current, "approved": approved}
 
 
 def matching_basis(first, second):

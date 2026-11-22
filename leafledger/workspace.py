@@ -1,4 +1,11 @@
-from .color import robust_neutral
+import numpy as np
+
+from .balance import (
+    calibration_record,
+    mask_centroid,
+    nearest_card_zones,
+    reconstruct_trust,
+)
 from .geometry import (
     DEFAULT_CORNERS,
     canvas_dimensions,
@@ -24,6 +31,7 @@ from .model import (
     scalar,
     string,
     tile_fields,
+    unique_ids,
 )
 from .photos import diagnostic_flags, store_capture
 from .store import make_id
@@ -239,14 +247,25 @@ def save_region(store, identifier, payload, region_id=None):
             tile["regions"].append(region)
         else:
             previous = match_slot(tile["regions"], chosen, "sampling region")
-            index = tile["regions"].index(previous)
-            tile["regions"][index] = region
-        if tile["calibration"]:
-            reasons = {region["purpose"], previous["purpose"]} if region_id is not None else {region["purpose"]}
-            if tile["calibration"]["region_id"] == chosen or "ignore" in reasons:
-                tile["calibration"] = None
+            tile["regions"][tile["regions"].index(previous)] = region
+        invalidate_calibration(tile, chosen, {region["purpose"], previous["purpose"]} if region_id is not None else {region["purpose"]})
 
     return store.edit_tile(identifier, expected, change, "region", f"Saved sampling region {region['name']}")
+
+
+def invalidate_calibration(tile, changed_id, purposes):
+    calibration = tile.get("calibration")
+    if not calibration:
+        return
+    if calibration.get("schema") == "leafledger.balance.v2":
+        guarded = set(calibration.get("card_region_ids", []))
+        if calibration.get("tip_region_id"):
+            guarded.add(calibration["tip_region_id"])
+        if changed_id in guarded or "ignore" in purposes or {"neutral", "tip"} & purposes:
+            tile["calibration"] = None
+        return
+    if calibration["region_id"] == changed_id or "ignore" in purposes:
+        tile["calibration"] = None
 
 
 def remove_region(store, identifier, region_id, payload):
@@ -256,32 +275,64 @@ def remove_region(store, identifier, region_id, payload):
     def change(tile):
         region = match_slot(tile["regions"], chosen, "sampling region")
         tile["regions"].remove(region)
-        if tile["calibration"] and (tile["calibration"]["region_id"] == chosen or region["purpose"] == "ignore"):
-            tile["calibration"] = None
+        invalidate_calibration(tile, chosen, {region["purpose"]})
 
     return store.edit_tile(identifier, expected, change, "region", "Removed a live sampling region")
 
 
 def calibrate(store, identifier, payload):
     expected = model_version(payload)
-    region_id = identity(payload.get("region_id"), "Neutral card region")
     target = scalar(payload.get("target", 0.18), "Neutral reflectance target", lower=0.08, upper=0.8)
     before = store.tile(identifier)
     store.require_version(before, expected)
-    selected = match_slot(before["regions"], region_id, "neutral card")
-    if selected["purpose"] != "neutral":
-        raise InputError("Select a region marked as a neutral color card.")
+    raw_ids = payload.get("region_ids")
+    if raw_ids is not None:
+        region_ids = unique_ids(raw_ids, "Neutral card regions", minimum=1, maximum=4)
+    else:
+        region_ids = [identity(payload.get("region_id"), "Neutral card region")]
+    selected_regions = [match_slot(before["regions"], region_id, "neutral card") for region_id in region_ids]
+    for selected in selected_regions:
+        if selected["purpose"] != "neutral":
+            raise InputError(f"Region '{selected['name']}' is not marked as a neutral color card.")
+    tip_id = payload.get("tip_region_id")
+    tip_region = None
+    if tip_id:
+        tip_region = match_slot(before["regions"], identity(tip_id, "Near-tip reference region"), "sampling region")
+        if tip_region["purpose"] != "tip":
+            raise InputError(f"Region '{tip_region['name']}' is not marked as a near-tip fading reference.")
     frame = specimen_frame(store.blobs, before)
     area = region_domain(frame.extent, before)
-    record = robust_neutral(frame, selected, area, target)
+    record, trust, zones, cards = calibration_record(frame, area, selected_regions, tip_region, target)
     record["plane_size"] = before["plane"]["size"]
     record["plane_corners"] = before["plane"]["corners"]
-    record["region_vertices"] = selected["vertices"]
 
     def change(tile):
         tile["calibration"] = record
 
-    return store.edit_tile(identifier, expected, change, "calibration", "Saved neutral-card image gains")
+    outcome = "Saved whole-specimen neutral gains"
+    if not record["all_cards_pass"]:
+        outcome = "Saved best-effort gains with calibration-limited color zones"
+    return store.edit_tile(identifier, expected, change, "calibration", outcome)
+
+
+def calibration_trust(store, identifier):
+    """Reconstruct the current trusted-zone partition for previews."""
+    tile = store.tile(identifier)
+    record = tile.get("calibration")
+    if not record or record.get("schema") != "leafledger.balance.v2":
+        return None
+    frame = specimen_frame(store.blobs, tile)
+    trust = reconstruct_trust(tile, record, frame.extent)
+    regions = {region["id"]: region for region in tile["regions"]}
+    cards = [
+        {"region_id": region_id, "name": regions[region_id]["name"],
+         "vertices": regions[region_id]["vertices"],
+         "centroid": mask_centroid(frame.extent, regions[region_id])}
+        for region_id in record["card_region_ids"] if region_id in regions
+    ]
+    zones = nearest_card_zones(frame.extent, cards)
+    linear = frame.linear * np.asarray(record["gains"], dtype=np.float32)
+    return frame, trust, record, zones, cards, linear
 
 
 def clear_calibration(store, identifier, payload):
